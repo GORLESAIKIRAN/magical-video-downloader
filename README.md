@@ -14,3 +14,5 @@ npm start
 Open http://localhost:3000.
 
 The Docker image installs Node, yt-dlp, FFmpeg, and Deno automatically for Render deployment. Only public URLs supported by yt-dlp can be downloaded; private or login-required content is not supported.
+
+If YouTube asks Render to verify a public request, add a Render secret environment variable named `YOUTUBE_COOKIES_BASE64` containing a base64-encoded Netscape cookies file exported from your own YouTube account. Never commit cookies to GitHub or place them in the page URL.

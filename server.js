@@ -8,10 +8,18 @@ const app = express();
 const port = Number(process.env.PORT) || 3000;
 const publicDir = path.join(__dirname, 'public');
 const tempDir = path.join(__dirname, 'tmp');
+const cookieFile = path.join(tempDir, 'youtube-cookies.txt');
 const modes = new Set(['youtube-video', 'youtube-audio', 'insta-video', 'insta-audio']);
 
 fs.mkdirSync(tempDir, { recursive: true });
 for (const file of fs.readdirSync(tempDir)) fs.rmSync(path.join(tempDir, file), { force: true });
+if (process.env.YOUTUBE_COOKIES_BASE64) {
+  try {
+    fs.writeFileSync(cookieFile, Buffer.from(process.env.YOUTUBE_COOKIES_BASE64, 'base64'), { mode: 0o600 });
+  } catch {
+    console.error('YOUTUBE_COOKIES_BASE64 is not valid base64.');
+  }
+}
 
 function findInstalledBinary(name) {
   const executable = process.platform === 'win32' ? `${name}.exe` : name;
@@ -56,7 +64,7 @@ app.use(express.json({ limit: '10kb' }));
 app.use(express.static(publicDir));
 
 app.get('/api/status', async (_req, res) => {
-  res.json({ ready: await ytDlpReady, audioReady: await ffmpegReady, youtubeCookies: Boolean(process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) });
+  res.json({ ready: await ytDlpReady, audioReady: await ffmpegReady, youtubeCookies: Boolean(getCookieFile()) });
 });
 
 function isHttpUrl(value) {
@@ -93,6 +101,11 @@ function sourceMatchesMode(value, mode) {
     return hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'youtu.be';
   }
   return hostname === 'instagram.com' || hostname === 'instagram.co';
+}
+
+function getCookieFile() {
+  if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) return process.env.YOUTUBE_COOKIES_FILE;
+  return fs.existsSync(cookieFile) ? cookieFile : '';
 }
 
 function temporaryBase() {
@@ -143,8 +156,9 @@ async function downloadMedia(req, res) {
   const base = temporaryBase();
   const output = `${base}.%(ext)s`;
   const args = ['--no-playlist', '--restrict-filenames', '--no-warnings', '--socket-timeout', '30', '--extractor-args', 'youtube:player_client=android_vr,web_embedded', '-o', output];
-  if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) {
-    args.unshift('--cookies', process.env.YOUTUBE_COOKIES_FILE);
+  const cookies = getCookieFile();
+  if (cookies && mode.startsWith('youtube-')) {
+    args.unshift('--cookies', cookies);
   }
   if (audio) {
     args.unshift('--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0');
