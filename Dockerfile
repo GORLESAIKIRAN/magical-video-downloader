@@ -1,4 +1,4 @@
-FROM node:20-bullseye-slim
+FROM node:20-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg python3 python3-pip unzip && pip3 install --no-cache-dir yt-dlp && curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && apt-get clean && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json ./
