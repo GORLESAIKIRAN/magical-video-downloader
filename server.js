@@ -127,6 +127,25 @@ function completedFile(base) {
   return files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
 }
 
+function sendFile(res, file, base) {
+  fs.stat(file, (error, stats) => {
+    if (error || !stats.isFile()) {
+      removeJobFiles(base);
+      return res.status(500).json({ error: 'Downloaded file is unavailable.' });
+    }
+    const filename = path.basename(file).replace(/[\r\n"\\]/g, '_');
+    const extension = path.extname(file).toLowerCase();
+    const contentType = extension === '.mp3' ? 'audio/mpeg' : extension === '.mp4' ? 'video/mp4' : 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', stats.size);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    const stream = fs.createReadStream(file);
+    stream.once('error', () => { removeJobFiles(base); if (!res.headersSent) res.status(500).json({ error: 'Could not read downloaded file.' }); });
+    stream.once('close', () => removeJobFiles(base));
+    stream.pipe(res);
+  });
+}
+
 async function downloadMedia(req, res) {
   const source = req.method === 'GET' ? req.query : req.body;
   const url = typeof source?.url === 'string' ? source.url.trim() : '';
@@ -161,7 +180,7 @@ async function downloadMedia(req, res) {
     args.unshift('--cookies', cookies);
   }
   if (audio) {
-    args.unshift('--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0');
+    args.unshift('-f', 'bestaudio/best');
   } else {
     args.unshift('-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', '--merge-output-format', 'mp4');
   }
@@ -202,23 +221,28 @@ async function downloadMedia(req, res) {
       return res.status(500).json({ error: 'Downloader finished without creating a file.' });
     }
 
-    fs.stat(file, (error, stats) => {
-      if (error || !stats.isFile()) {
+    if (audio) {
+      const mp3File = `${base}.mp3`;
+      const converter = spawn(ffmpegCommand, ['-y', '-i', file, '-vn', '-map_metadata', '-1', '-c:a', 'libmp3lame', '-b:a', '192k', mp3File], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let conversionError = '';
+      converter.stderr.on('data', chunk => { conversionError += chunk.toString(); });
+      converter.once('error', error => {
         finished = true;
         removeJobFiles(base);
-        return res.status(500).json({ error: 'Downloaded file is unavailable.' });
-      }
-      const filename = path.basename(file).replace(/[\r\n"\\]/g, '_');
-      const extension = path.extname(file).toLowerCase();
-      const contentType = extension === '.mp3' ? 'audio/mpeg' : extension === '.mp4' ? 'video/mp4' : 'application/octet-stream';
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Length', stats.size);
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      const stream = fs.createReadStream(file);
-      stream.once('error', () => { finished = true; removeJobFiles(base); if (!res.headersSent) res.status(500).json({ error: 'Could not read downloaded file.' }); });
-      stream.once('close', () => { finished = true; removeJobFiles(base); });
-      stream.pipe(res);
-    });
+        if (!res.headersSent) res.status(500).json({ error: `Could not convert audio: ${error.message}` });
+      });
+      converter.once('close', conversionCode => {
+        if (finished) return;
+        finished = true;
+        if (conversionCode !== 0) {
+          removeJobFiles(base);
+          return res.status(422).json({ error: 'Could not convert this video to MP3.', details: conversionError.slice(-800) });
+        }
+        sendFile(res, mp3File, base);
+      });
+      return;
+    }
+    sendFile(res, file, base);
   });
 }
 
