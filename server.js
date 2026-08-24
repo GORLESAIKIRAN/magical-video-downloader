@@ -12,20 +12,71 @@ const cookieFile = path.join(tempDir, 'youtube-cookies.txt');
 const modes = new Set(['youtube-video', 'youtube-audio', 'insta-video', 'insta-audio']);
 
 fs.mkdirSync(tempDir, { recursive: true });
-for (const file of fs.readdirSync(tempDir)) fs.rmSync(path.join(tempDir, file), { force: true });
-if (process.env.YOUTUBE_COOKIES_BASE64) {
-    try {
-        fs.writeFileSync(cookieFile, Buffer.from(process.env.YOUTUBE_COOKIES_BASE64, 'base64'), { mode: 0o600 });
-    } catch {
-        console.error('YOUTUBE_COOKIES_BASE64 is not valid base64.');
+for (const file of fs.readdirSync(tempDir)) {
+    try { fs.rmSync(path.join(tempDir, file), { force: true, recursive: true }); } catch {}
+}
+
+function sanitizeAndSaveCookies() {
+    const rawEnv = process.env.YOUTUBE_COOKIES || process.env.YOUTUBE_COOKIES_TEXT || process.env.YOUTUBE_COOKIES_BASE64;
+    if (!rawEnv || !rawEnv.trim()) return;
+
+    let cookieContent = '';
+    const trimmed = rawEnv.trim();
+
+    // 1. Check if it's already plain text Netscape format or contains typical cookie text
+    if (trimmed.startsWith('#') || trimmed.includes('\t') || trimmed.includes('youtube.com') || trimmed.includes('.google.com')) {
+        cookieContent = trimmed;
+    } else {
+        // 2. Try Base64 decoding
+        try {
+            const decoded = Buffer.from(trimmed, 'base64').toString('utf8');
+            // Verify decoded string is readable UTF-8 text and looks like cookies/text
+            const isReadable = !decoded.includes('\uFFFD') && /^[\x09\x0A\x0D\x20-\x7E]+$/.test(decoded);
+            if (isReadable && (decoded.includes('#') || decoded.includes('\t') || decoded.includes('youtube') || decoded.includes('google') || decoded.includes('VISITOR_INFO1_LIVE') || decoded.includes('SID'))) {
+                cookieContent = decoded;
+            } else if (isReadable) {
+                cookieContent = decoded;
+            } else {
+                console.warn('[Cookies] Decoded base64 cookies did not contain valid text. Treating as plain text or skipping.');
+                if (!trimmed.includes('\uFFFD')) {
+                    cookieContent = trimmed;
+                }
+            }
+        } catch (e) {
+            console.warn('[Cookies] Base64 decoding failed:', e.message);
+            cookieContent = trimmed;
+        }
+    }
+
+    if (cookieContent) {
+        // Strip BOM if present
+        if (cookieContent.charCodeAt(0) === 0xFEFF) {
+            cookieContent = cookieContent.slice(1);
+        }
+        // Normalize line endings to LF
+        cookieContent = cookieContent.replace(/\r\n/g, '\n');
+
+        // Ensure valid Netscape header
+        if (!cookieContent.startsWith('# Netscape HTTP Cookie File') && !cookieContent.startsWith('# HTTP Cookie File')) {
+            cookieContent = `# Netscape HTTP Cookie File\n${cookieContent}`;
+        }
+
+        try {
+            fs.writeFileSync(cookieFile, cookieContent, { encoding: 'utf8', mode: 0o600 });
+            console.log('[Cookies] YouTube cookies file successfully written.');
+        } catch (err) {
+            console.error('[Cookies] Could not write cookies file:', err.message);
+        }
     }
 }
+
+sanitizeAndSaveCookies();
 
 function findInstalledBinary(name) {
     const executable = process.platform === 'win32' ? `${name}.exe` : name;
     const roots = process.platform === 'win32' ?
         [process.env.LOCALAPPDATA, process.env.ProgramFiles, process.env['ProgramFiles(x86)']] :
-        ['/usr/local/bin', '/usr/bin'];
+        ['/usr/local/bin', '/usr/bin', '/opt/venv/bin'];
     for (const root of roots.filter(Boolean)) {
         if (!fs.existsSync(root)) continue;
         const pending = [root];
@@ -45,7 +96,7 @@ function findInstalledBinary(name) {
 
 const ffmpegCommand = findInstalledBinary('ffmpeg');
 const denoCommand = findInstalledBinary('deno');
-for (const command of[ffmpegCommand, denoCommand]) {
+for (const command of [ffmpegCommand, denoCommand]) {
     if (path.isAbsolute(command)) process.env.PATH = `${path.dirname(command)}${path.delimiter}${process.env.PATH || ''}`;
 }
 
@@ -62,10 +113,6 @@ const ffmpegReady = commandAvailable(ffmpegCommand, ['-version']);
 
 app.use(express.json({ limit: '10kb' }));
 app.use(express.static(publicDir));
-
-app.get('/api/status', async(_req, res) => {
-    res.json({ ready: await ytDlpReady, audioReady: await ffmpegReady, youtubeCookies: Boolean(getCookieFile()) });
-});
 
 function isHttpUrl(value) {
     try {
@@ -104,9 +151,32 @@ function sourceMatchesMode(value, mode) {
 }
 
 function getCookieFile() {
-    if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) return process.env.YOUTUBE_COOKIES_FILE;
-    return fs.existsSync(cookieFile) ? cookieFile : '';
+    if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) {
+        try {
+            const content = fs.readFileSync(process.env.YOUTUBE_COOKIES_FILE, 'utf8');
+            if (content && !content.includes('\uFFFD') && content.trim().length > 10) {
+                return process.env.YOUTUBE_COOKIES_FILE;
+            }
+        } catch {}
+    }
+    if (fs.existsSync(cookieFile)) {
+        try {
+            const content = fs.readFileSync(cookieFile, 'utf8');
+            if (content && !content.includes('\uFFFD') && content.trim().length > 10) {
+                return cookieFile;
+            }
+        } catch {}
+    }
+    return '';
 }
+
+app.get('/api/status', async (_req, res) => {
+    res.json({
+        ready: await ytDlpReady,
+        audioReady: await ffmpegReady,
+        youtubeCookies: Boolean(getCookieFile())
+    });
+});
 
 function temporaryBase() {
     return path.join(tempDir, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}`);
@@ -115,7 +185,9 @@ function temporaryBase() {
 function removeJobFiles(base) {
     const prefix = path.basename(base);
     for (const file of fs.readdirSync(tempDir)) {
-        if (file.startsWith(prefix)) fs.rmSync(path.join(tempDir, file), { force: true });
+        if (file.startsWith(prefix)) {
+            try { fs.rmSync(path.join(tempDir, file), { force: true }); } catch {}
+        }
     }
 }
 
@@ -140,7 +212,10 @@ function sendFile(res, file, base) {
         res.setHeader('Content-Length', stats.size);
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         const stream = fs.createReadStream(file);
-        stream.once('error', () => { removeJobFiles(base); if (!res.headersSent) res.status(500).json({ error: 'Could not read downloaded file.' }); });
+        stream.once('error', () => {
+            removeJobFiles(base);
+            if (!res.headersSent) res.status(500).json({ error: 'Could not read downloaded file.' });
+        });
         stream.once('close', () => removeJobFiles(base));
         stream.pipe(res);
     });
@@ -155,6 +230,7 @@ async function downloadMedia(req, res) {
     if (!url) return res.status(400).json({ error: 'Paste a video URL first.' });
     if (!modes.has(mode)) return res.status(400).json({ error: 'Choose a valid download type.' });
     if (!isHttpUrl(url)) return res.status(400).json({ error: 'Use a valid public http or https video URL.' });
+
     try {
         if (!sourceMatchesMode(url, mode)) {
             const sourceName = mode.startsWith('youtube-') ? 'YouTube' : 'Instagram';
@@ -163,30 +239,54 @@ async function downloadMedia(req, res) {
     } catch {
         return res.status(400).json({ error: 'Use a valid public http or https video URL.' });
     }
+
     let normalizedUrl;
     try {
         normalizedUrl = normalizeUrl(url);
     } catch {
         return res.status(400).json({ error: 'Use a valid public http or https video URL.' });
     }
+
     if (!(await ytDlpReady)) return res.status(503).json({ error: 'yt-dlp is not installed or unavailable.' });
     if (audio && !(await ffmpegReady)) return res.status(503).json({ error: 'FFmpeg is required for MP3 downloads.' });
 
     const base = temporaryBase();
     const output = `${base}.%(ext)s`;
-    const args = ['--no-playlist', '--restrict-filenames', '--no-warnings', '--socket-timeout', '30', '--extractor-args', 'youtube:player_client=android_vr,web_embedded', '-o', output];
-    const cookies = getCookieFile();
-    if (cookies && mode.startsWith('youtube-')) {
-        args.unshift('--cookies', cookies);
+    const isYoutube = mode.startsWith('youtube-');
+
+    const args = [
+        '--no-playlist',
+        '--restrict-filenames',
+        '--no-warnings',
+        '--socket-timeout', '30',
+        '-o', output
+    ];
+
+    if (isYoutube) {
+        args.push('--extractor-args', 'youtube:player_client=android,web,web_embedded,ios');
     }
+
+    const cookies = isYoutube ? getCookieFile() : '';
+    if (cookies) {
+        args.push('--cookies', cookies);
+    }
+
     if (audio) {
-        args.unshift('-f', 'bestaudio/best');
+        args.push('-f', 'ba/b');
     } else {
-        args.unshift('-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', '--merge-output-format', 'mp4');
+        args.push('-f', 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b', '--merge-output-format', 'mp4');
     }
     args.push(normalizedUrl);
 
-    const child = spawn('yt-dlp', args);
+    const child = spawn('yt-dlp', args, {
+        env: {
+            ...process.env,
+            PYTHONIOENCODING: 'utf-8',
+            LANG: 'C.UTF-8',
+            LC_ALL: 'C.UTF-8'
+        }
+    });
+
     let errorText = '';
     let finished = false;
     child.stderr.on('data', chunk => { errorText += chunk.toString(); });
@@ -210,7 +310,7 @@ async function downloadMedia(req, res) {
             removeJobFiles(base);
             const botCheck = /sign in to confirm|not a bot|cookies?[- ]from-browser/i.test(errorText);
             const error = botCheck ?
-                'YouTube is requiring verification for this request. Try another public video, or configure YOUTUBE_COOKIES_FILE on the server.' :
+                'YouTube is requiring verification for this request. Configure valid YouTube cookies on the server.' :
                 'This URL could not be downloaded.';
             return res.status(422).json({ error, details: botCheck ? undefined : errorText.slice(-1200) });
         }
@@ -249,4 +349,4 @@ async function downloadMedia(req, res) {
 app.post('/api/download', downloadMedia);
 app.get('/api/download', downloadMedia);
 
-app.listen(port, () => console.log(`Server listening on http://localhost:${port}`));
+app.listen(port, () => console.log(`Server listening on http://localhost:${port}`));
