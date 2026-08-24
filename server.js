@@ -266,6 +266,10 @@ async function downloadMedia(req, res) {
         args.push('--extractor-args', 'youtube:player_client=android,web,web_embedded,ios');
     }
 
+    if (process.env.PROXY || process.env.HTTP_PROXY) {
+        args.push('--proxy', process.env.PROXY || process.env.HTTP_PROXY);
+    }
+
     const cookies = isYoutube ? getCookieFile() : '';
     if (cookies) {
         args.push('--cookies', cookies);
