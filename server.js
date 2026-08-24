@@ -56,7 +56,7 @@ app.use(express.json({ limit: '10kb' }));
 app.use(express.static(publicDir));
 
 app.get('/api/status', async (_req, res) => {
-  res.json({ ready: await ytDlpReady, audioReady: await ffmpegReady });
+  res.json({ ready: await ytDlpReady, audioReady: await ffmpegReady, youtubeCookies: Boolean(process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) });
 });
 
 function isHttpUrl(value) {
@@ -142,7 +142,7 @@ async function downloadMedia(req, res) {
 
   const base = temporaryBase();
   const output = `${base}.%(ext)s`;
-  const args = ['--no-playlist', '--restrict-filenames', '--no-warnings', '--socket-timeout', '30', '--extractor-args', 'youtube:player_client=android_vr', '-o', output];
+  const args = ['--no-playlist', '--restrict-filenames', '--no-warnings', '--socket-timeout', '30', '--extractor-args', 'youtube:player_client=android_vr,web_embedded', '-o', output];
   if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) {
     args.unshift('--cookies', process.env.YOUTUBE_COOKIES_FILE);
   }
