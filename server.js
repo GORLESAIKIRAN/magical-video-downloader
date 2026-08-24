@@ -87,6 +87,14 @@ function normalizeUrl(value) {
   return url.toString();
 }
 
+function sourceMatchesMode(value, mode) {
+  const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, '');
+  if (mode.startsWith('youtube-')) {
+    return hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'youtu.be';
+  }
+  return hostname === 'instagram.com' || hostname === 'instagram.co';
+}
+
 function temporaryBase() {
   return path.join(tempDir, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}`);
 }
@@ -115,6 +123,14 @@ async function downloadMedia(req, res) {
   if (!url) return res.status(400).json({ error: 'Paste a video URL first.' });
   if (!modes.has(mode)) return res.status(400).json({ error: 'Choose a valid download type.' });
   if (!isHttpUrl(url)) return res.status(400).json({ error: 'Use a valid public http or https video URL.' });
+  try {
+    if (!sourceMatchesMode(url, mode)) {
+      const sourceName = mode.startsWith('youtube-') ? 'YouTube' : 'Instagram';
+      return res.status(400).json({ error: `Use a ${sourceName} URL in this section.` });
+    }
+  } catch {
+    return res.status(400).json({ error: 'Use a valid public http or https video URL.' });
+  }
   let normalizedUrl;
   try {
     normalizedUrl = normalizeUrl(url);
@@ -127,6 +143,9 @@ async function downloadMedia(req, res) {
   const base = temporaryBase();
   const output = `${base}.%(ext)s`;
   const args = ['--no-playlist', '--restrict-filenames', '--no-warnings', '--socket-timeout', '30', '--extractor-args', 'youtube:player_client=android_vr', '-o', output];
+  if (process.env.YOUTUBE_COOKIES_FILE && fs.existsSync(process.env.YOUTUBE_COOKIES_FILE)) {
+    args.unshift('--cookies', process.env.YOUTUBE_COOKIES_FILE);
+  }
   if (audio) {
     args.unshift('--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0');
   } else {
@@ -156,7 +175,11 @@ async function downloadMedia(req, res) {
     if (code !== 0) {
       finished = true;
       removeJobFiles(base);
-      return res.status(422).json({ error: 'This URL could not be downloaded.', details: errorText.slice(-1200) });
+      const botCheck = /sign in to confirm|not a bot|cookies?[- ]from-browser/i.test(errorText);
+      const error = botCheck
+        ? 'YouTube is requiring verification for this request. Try another public video, or configure YOUTUBE_COOKIES_FILE on the server.'
+        : 'This URL could not be downloaded.';
+      return res.status(422).json({ error, details: botCheck ? undefined : errorText.slice(-1200) });
     }
 
     const file = completedFile(base);
