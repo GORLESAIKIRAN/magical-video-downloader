@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Magical Video Downloader</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div class="eyebrow">MEDIA DOWNLOADER</div>
+      <h1>Magical Video Downloader</h1>
+      <p>Download public videos or extract MP3 audio.</p>
+      <div id="status" class="status"><i></i><span id="status-label">Checking...</span><small id="status-detail">&bull; yt-dlp &bull; FFmpeg</small></div>
+    </header>
+    <div class="grid">
+      <section class="card"><h2>YouTube <b>-&gt;</b> Video</h2><p>Best available video + audio, merged to MP4.</p><label class="sr-only" for="yt-video-url">Video URL</label><input id="yt-video-url" type="url" placeholder="Paste video URL"><button type="button" data-mode="youtube-video">Download Video</button></section>
+      <section class="card"><h2>YouTube <b>-&gt;</b> Audio</h2><p>Extract audio and convert it to MP3.</p><label class="sr-only" for="yt-audio-url">Audio URL</label><input id="yt-audio-url" type="url" placeholder="Paste video URL"><button type="button" data-mode="youtube-audio">Download MP3</button></section>
+      <section class="card"><h2>Instagram <b>-&gt;</b> Video</h2><p>Download a public post, reel, or video.</p><label class="sr-only" for="ig-video-url">Video URL</label><input id="ig-video-url" type="url" placeholder="Paste video URL"><button type="button" data-mode="insta-video">Download Video</button></section>
+      <section class="card"><h2>Instagram <b>-&gt;</b> Audio</h2><p>Extract audio from a public Instagram video.</p><label class="sr-only" for="ig-audio-url">Audio URL</label><input id="ig-audio-url" type="url" placeholder="Paste video URL"><button type="button" data-mode="insta-audio">Download MP3</button></section>
+    </div>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+  </main>
+  <footer><span>7989010109</span><span>Insta Account: saikiran_gsk_27</span><span>&copy; GSK</span></footer>
+  <script src="/app.js"></script>
+</body>
+</html>

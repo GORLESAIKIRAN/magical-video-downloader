@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: magical-video-downloader
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
